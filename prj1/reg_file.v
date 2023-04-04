@@ -14,13 +14,13 @@ module reg_file(
 	output [`DATA_WIDTH - 1:0]  rdata2
 );
 
-	reg [`DATA_WIDTH - 1:0] rf [`DATA_WIDTH - 1:0];   //declaration
+	reg [`DATA_WIDTH - 1:0] rf [`DATA_WIDTH - 1:0]; 	// declaration
 	
-	always @(posedge clk) begin                        // write using sequential logic
+	always @(posedge clk) begin 	// write using sequential logic
 		if (wen && waddr) rf[waddr] <= wdata;
 	end
 	
-	assign rdata1 = (raddr1 == 5'b0)? 32'b0: rf[raddr1];                       //read using combinational logic
+	assign rdata1 = (raddr1 == 5'b0)? 32'b0: rf[raddr1]; 	// read using combinational logic
 	assign rdata2 = (raddr2 == 5'b0)? 32'b0: rf[raddr2];
 	
 endmodule
