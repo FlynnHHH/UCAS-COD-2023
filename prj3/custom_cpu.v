@@ -1,30 +1,76 @@
 `timescale 10ns / 1ns
 
-module simple_cpu(
-	input             clk,
-	input             rst,
+module custom_cpu(
+	input         clk,
+	input         rst,
 
-	output reg [31:0]     PC,
-	input  [31:0]     Instruction,
+	//Instruction request channel
+	output reg [31:0] PC,
+	output        Inst_Req_Valid,
+	input         Inst_Req_Ready,
 
-	output [31:0]     Address,
-	output            MemWrite,
-	output [31:0]     Write_data,
-	output [ 3:0]     Write_strb,
+	//Instruction response channel
+	input  [31:0] Instruction,
+	input         Inst_Valid,
+	output        Inst_Ready,
 
-	input  [31:0]     Read_data,
-	output            MemRead
+	//Memory request channel
+	output [31:0] Address,
+	output        MemWrite,
+	output [31:0] Write_data,
+	output [ 3:0] Write_strb,
+	output        MemRead,
+	input         Mem_Req_Ready,
+
+	//Memory data response channel
+	input  [31:0] Read_data,
+	input         Read_data_Valid,
+	output        Read_data_Ready,
+
+	input         intr,
+
+	output [31:0] cpu_perf_cnt_0,
+	output [31:0] cpu_perf_cnt_1,
+	output [31:0] cpu_perf_cnt_2,
+	output [31:0] cpu_perf_cnt_3,
+	output [31:0] cpu_perf_cnt_4,
+	output [31:0] cpu_perf_cnt_5,
+	output [31:0] cpu_perf_cnt_6,
+	output [31:0] cpu_perf_cnt_7,
+	output [31:0] cpu_perf_cnt_8,
+	output [31:0] cpu_perf_cnt_9,
+	output [31:0] cpu_perf_cnt_10,
+	output [31:0] cpu_perf_cnt_11,
+	output [31:0] cpu_perf_cnt_12,
+	output [31:0] cpu_perf_cnt_13,
+	output [31:0] cpu_perf_cnt_14,
+	output [31:0] cpu_perf_cnt_15,
+
+	output [69:0] inst_retire
 );
 
-	// THESE THREE SIGNALS ARE USED IN OUR TESTBENCH
-	// PLEASE DO NOT MODIFY SIGNAL NAMES 
-	// AND PLEASE USE THEM TO CONNECT PORTS
-	// OF YOUR INSTANTIATION OF THE REGISTER FILE MODULE
+/* The following signal is leveraged for behavioral simulation, 
+* which is delivered to testbench.
+*
+* STUDENTS MUST CONTROL LOGICAL BEHAVIORS of THIS SIGNAL.
+*
+* inst_retired (70-bit): detailed information of the retired instruction,
+* mainly including (in order) 
+* { 
+*   reg_file write-back enable  (69:69,  1-bit),
+*   reg_file write-back address (68:64,  5-bit), 
+*   reg_file write-back data    (63:32, 32-bit),  
+*   retired PC                  (31: 0, 32-bit)
+* }
+*
+*/
+  	wire [69:0] inst_retire;
+	// TODO: Please add your custom CPU code here
 	wire			RF_wen;
 	wire [4:0]		RF_waddr;
 	wire [31:0]		RF_wdata;
-
-	// TODO: PLEASE ADD YOUR CODE BELOW
+	assign inst_retire = {RF_wen, RF_waddr, RF_wdata, PC};
+	
 	`define SPECIAL 6'b000000
 	`define ALUOP_AND  3'b000
 	`define ALUOP_OR   3'b001
@@ -47,16 +93,16 @@ module simple_cpu(
 	`define ILoad 4'b1001
 	`define IStore 4'b1010 // define instruction type code
 
-	wire [5:0] opcode = Instruction[31:26];
-	wire [4:0] rs = Instruction[25:21];
-	wire [4:0] base = Instruction[25:21];
-	wire [4:0] rt = Instruction[20:16];
-	wire [4:0] rd = Instruction[15:11];	
-	wire [4:0] REG = Instruction[20:16];	
-	wire [4:0] shamt = Instruction[10:6];
-	wire [5:0] func = Instruction[5:0];
-	wire [15:0] imm = Instruction[15:0];
-	wire [25:0] Instr_index = Instruction[25:0]; // define some wire variations to decode the instruction
+	wire [5:0] opcode = valid_Instruction[31:26];
+	wire [4:0] rs = valid_Instruction[25:21];
+	wire [4:0] base = valid_Instruction[25:21];
+	wire [4:0] rt = valid_Instruction[20:16];
+	wire [4:0] rd = valid_Instruction[15:11];	
+	wire [4:0] REG = valid_Instruction[20:16];	
+	wire [4:0] shamt = valid_Instruction[10:6];
+	wire [5:0] func = valid_Instruction[5:0];
+	wire [15:0] imm = valid_Instruction[15:0];
+	wire [25:0] Instr_index = valid_Instruction[25:0]; // define some wire variations to decode the instruction
 	wire [3:0] type = {4{opcode == `SPECIAL && func[5] == 1'b1}} & `RAlu |
 					{4{opcode == `SPECIAL && func[5:3] == 3'b000}} & `RShift |
 					{4{opcode == `SPECIAL && {func[5:3], func[1]} == 4'b0010}} & `RJump |
@@ -71,14 +117,20 @@ module simple_cpu(
 	//PC
 	wire [31:0] PC_next = PC + 4;
 	wire [31:0] branch_PC;
+	reg [31:0] PC_pre;
 	always @(posedge clk) begin
-		if (rst) begin
-			PC <= 32'b0;
-		end
-		else begin
+		if (rst) PC <= 32'b0;
+		else if(current_state == EX)
 			PC <= (type == `RJump || type == `JType) ? jumpaddr:((branch & isbranch)?branch_PC:PC_next);
-		end
+		else if(valid_Instruction == 32'b0 && current_state == ID) 
+			PC <= PC_next;
+		else 
+			PC <= PC;
 	end 
+	always @(posedge clk ) begin
+		if (current_state == IF) PC_pre <= PC;
+		else PC_pre <= PC_pre;
+	end
 	alu alu_branch(
 		.A(offset_two_extend),
 		.B(PC_next),
@@ -133,11 +185,8 @@ module simple_cpu(
 	// main control unit
 	wire RegDst = (type == `IAlu || type == `ILoad || type == `lui)? 1'b0:1'b1;
 	wire branch = (type == `IBranch || type == `REGIMM)? 1'b1:1'b0;
-	assign MemRead = (type == `ILoad)? 1'b1:1'b0;
-	wire MemtoReg = (type == `ILoad)? 1'b1:1'b0;
-	assign MemWrite = (type == `IStore)? 1'b1:1'b0;
 	wire ALUSrc = (type == `IAlu || type == `ILoad || type == `IStore)? 1'b1:1'b0;
-	assign RF_wen = (type ==`IStore || (type ==`JType && opcode[0] == 0) || type == `IBranch || type == `REGIMM || type == `RJump && func[0] == 0 || type == `RMove && ~func[0] ^ Zero)? 1'b0:1'b1;
+	assign RF_wen = (type ==`IStore || (type ==`JType && opcode[0] == 0) || type == `IBranch || type == `REGIMM || type == `RJump && func[0] == 0 || type == `RMove && ~func[0] ^ Zero || current_state != WB)? 1'b0:1'b1;
 	assign RF_waddr = (opcode == 6'b000011)? 31:((RegDst)? rd:rt); // jal writes r31
 	// assign RF_wdata = {{32{type == `RAlu || type == `IAlu}} & ALU_result} | 
 	// 		{{32{type == `RShift}} & SHIFT_result} | 
@@ -147,7 +196,7 @@ module simple_cpu(
 	
 	assign RF_wdata = (type == `RAlu || type == `IAlu)? ALU_result:
 					  ((type == `RShift)? SHIFT_result:
-					  ((opcode == 6'b000011 || (type == `RJump && func == 6'b001001))? PC + 8:
+					  ((opcode == 6'b000011 || (type == `RJump && func == 6'b001001))? PC_pre + 8:
 					  ((type == `ILoad)? load_result:
 					  ((type == `RMove)? RF_rdata1:lui_extend))));
 
@@ -185,22 +234,22 @@ module simple_cpu(
 	// load control
 	wire [1:0] n = ALU_result[1:0];
 
-	wire [31:0] lb_result = (n[1] & n[0])? {{24{Read_data[31]}},Read_data[31:24]}:
-					   ((n[1] & ~n[0])? {{24{Read_data[23]}},Read_data[23:16]}:
-					   ((~n[1] & n[0])? {{24{Read_data[15]}},Read_data[15:8]}:{{24{Read_data[7]}},Read_data[7:0]}));
+	wire [31:0] lb_result = (n[1] & n[0])? {{24{valid_Read_data[31]}},valid_Read_data[31:24]}:
+					   ((n[1] & ~n[0])? {{24{valid_Read_data[23]}},valid_Read_data[23:16]}:
+					   ((~n[1] & n[0])? {{24{valid_Read_data[15]}},valid_Read_data[15:8]}:{{24{valid_Read_data[7]}},valid_Read_data[7:0]}));
 	wire [31:0] lbu_result = {{24{1'b0}},lb_result[7:0]};
 
-	wire [31:0] lh_result = (~n[1])? {{16{Read_data[15]}},Read_data[15:0]}:{{16{Read_data[31]}},Read_data[31:16]}; 
+	wire [31:0] lh_result = (~n[1])? {{16{valid_Read_data[15]}},valid_Read_data[15:0]}:{{16{valid_Read_data[31]}},valid_Read_data[31:16]}; 
 	wire [31:0] lhu_result = {{16{1'b0}},lh_result[15:0]};
 
-	wire [31:0] lw_result = Read_data[31:0];
-	wire [31:0] lwl_result = (n[1] & n[0])? Read_data[31:0]: 
-						((n[1] & ~n[0])? {Read_data[23:0],RF_rdata2[7:0]}:
-						((~n[1] & n[0])? {Read_data[15:0],RF_rdata2[15:0]}:{Read_data[7:0],RF_rdata2[23:0]}));
+	wire [31:0] lw_result = valid_Read_data[31:0];
+	wire [31:0] lwl_result = (n[1] & n[0])? valid_Read_data[31:0]: 
+						((n[1] & ~n[0])? {valid_Read_data[23:0],RF_rdata2[7:0]}:
+						((~n[1] & n[0])? {valid_Read_data[15:0],RF_rdata2[15:0]}:{valid_Read_data[7:0],RF_rdata2[23:0]}));
 
-	wire [31:0] lwr_result = (~n[1] & ~n[0])? Read_data[31:0]:
-						((~n[1] & n[0])? {RF_rdata2[31:24],Read_data[31:8]}:
-						((n[1] & ~n[0])? {RF_rdata2[31:16],Read_data[31:16]}:{RF_rdata2[31:8],Read_data[31:24]}));
+	wire [31:0] lwr_result = (~n[1] & ~n[0])? valid_Read_data[31:0]:
+						((~n[1] & n[0])? {RF_rdata2[31:24],valid_Read_data[31:8]}:
+						((n[1] & ~n[0])? {RF_rdata2[31:16],valid_Read_data[31:16]}:{RF_rdata2[31:8],valid_Read_data[31:24]}));
 
 	
 	wire [31:0] load_result = (opcode == 6'b100000)? lb_result:
@@ -251,4 +300,62 @@ module simple_cpu(
 						((opcode == 6'b101010)? swl_data:
 						((opcode == 6'b101110)? swr_data: swr_data))));
 
+	// 3-part FSM
+	// decode the state of the FSM using one-hot encoding
+	parameter INIT = 9'b000000001,
+	          IF   = 9'b000000010,
+	          IW   = 9'b000000100,
+	          ID   = 9'b000001000,
+	          EX   = 9'b000010000,
+	          LD   = 9'b000100000,
+	          ST   = 9'b001000000,
+	          RDW  = 9'b010000000,
+	          WB   = 9'b100000000;	
+	reg [8:0] current_state, next_state;
+	reg [31:0] valid_Instruction, valid_Read_data;
+	// part 1
+	always @(posedge clk ) begin
+		if(rst) current_state <= INIT;
+		else current_state <= next_state;
+	end
+	// part 2
+	always @(*) begin
+		case (current_state)
+			INIT: next_state = IF;
+			IF: if(Inst_Req_Ready) next_state = IW; else next_state = IF;
+			IW: if(Inst_Valid) next_state = ID; else next_state = IW;
+			ID: if(valid_Instruction[31:0] == 32'b0) next_state = IF; else next_state = EX;
+			EX: if(type == `ILoad) next_state = LD;
+				else if(type == `IStore) next_state = ST;
+				else if (type == `REGIMM || type == `IBranch || opcode[5:0] == 6'b000010) 
+					next_state = IF;
+				else next_state = WB;
+			LD: if(Mem_Req_Ready) next_state = RDW; else next_state = LD;
+			RDW: if(Read_data_Valid) next_state = WB; else next_state = RDW;
+			WB: next_state = IF;
+			ST: if(Mem_Req_Ready) next_state = IF; else next_state = ST;
+			default: next_state = INIT;
+		endcase
+	end
+	// part 3
+	assign Inst_Req_Valid = current_state == IF;
+	assign Inst_Ready      = (current_state == IW || current_state == INIT);
+	assign Read_data_Ready = (current_state == RDW || current_state == INIT);
+	assign MemRead         = current_state == LD;
+	assign MemWrite        = current_state == ST;
+	always @(posedge clk) begin
+		valid_Instruction <= (Inst_Ready && Inst_Valid)? Instruction: valid_Instruction;
+	end
+	always @(posedge clk) begin
+		valid_Read_data <= (Read_data_Ready && Read_data_Valid)? Read_data: valid_Read_data;
+	end
+	
+	// performance counter
+	// The number of cycle
+	reg [31:0] cycle_cnt;
+	always @(posedge clk) begin
+		if(rst) cycle_cnt <= 32'd0;
+		else cycle_cnt <= cycle_cnt + 32'd1;
+	end
+	assign cpu_perf_cnt_0 = cycle_cnt;
 endmodule

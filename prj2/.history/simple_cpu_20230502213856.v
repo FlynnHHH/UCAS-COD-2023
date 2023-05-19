@@ -52,7 +52,7 @@ module simple_cpu(
 	wire [4:0] base = Instruction[25:21];
 	wire [4:0] rt = Instruction[20:16];
 	wire [4:0] rd = Instruction[15:11];	
-	wire [4:0] REG = Instruction[20:16];	
+	wire [4:0] REG = Instruction[15:11];	
 	wire [4:0] shamt = Instruction[10:6];
 	wire [5:0] func = Instruction[5:0];
 	wire [15:0] imm = Instruction[15:0];
@@ -177,10 +177,10 @@ module simple_cpu(
 						{{32{type == `JType}} & instr_two_extend};
 
 	// branch control
-	wire isbranch = ((type == `REGIMM && REG[0] ^ ~Zero ) || 
+	wire isbranch = ((type == `REGIMM && REG[0] ^ ~Zero) || 
 					(type == `IBranch && opcode[1] == 0 && opcode[0] ^ Zero) ||
 					(type == `IBranch && opcode[1:0] == 2'b10 && (~Zero || RF_rdata1 == 32'b0)) ||
-					(type == `IBranch && opcode[1:0] == 2'b11 && Zero && RF_rdata1 != 32'b0) )? 1'b1:1'b0;
+					(type == `IBranch && opcode[1:0] == 2'b11 && ~Zero) )? 1'b1:1'b0;
 	
 	// load control
 	wire [1:0] n = ALU_result[1:0];
